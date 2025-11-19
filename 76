@@ -1,0 +1,68 @@
+import React, { useEffect, useState } from "react";
+import axios from "axios";
+import { Box, Typography, Button, List, ListItem, TextField } from "@mui/material";
+
+function AdminPanel() {
+  const [users, setUsers] = useState([]);
+  const [brand, setBrand] = useState("");
+  const [faceValue, setFaceValue] = useState("");
+  const [price, setPrice] = useState("");
+  const [code, setCode] = useState("");
+
+  const token = localStorage.getItem("token");
+
+  const fetchUsers = async () => {
+    let res = await axios.get(import.meta.env.VITE_API_URL + "/admin/users", { headers: { Authorization: `Bearer ${token}` } });
+    setUsers(res.data);
+  };
+
+  useEffect(() => { fetchUsers(); }, []);
+
+  const addMoney = async (uid) => {
+    let amt = window.prompt("Amount to add:");
+    await axios.post(import.meta.env.VITE_API_URL + "/admin/addmoney", { userId: uid, amount: Number(amt) }, { headers: { Authorization: `Bearer ${token}` } });
+    fetchUsers();
+  };
+
+  const freeze = async (uid) => {
+    await axios.post(import.meta.env.VITE_API_URL + "/admin/freeze", { userId: uid }, { headers: { Authorization: `Bearer ${token}` } });
+    fetchUsers();
+  };
+
+  const ban = async (uid) => {
+    await axios.post(import.meta.env.VITE_API_URL + "/admin/ban", { userId: uid }, { headers: { Authorization: `Bearer ${token}` } });
+    fetchUsers();
+  };
+
+  const addGiftCard = async () => {
+    await axios.post(import.meta.env.VITE_API_URL + "/admin/giftcards", { brand, faceValue: Number(faceValue), price: Number(price), code }, { headers: { Authorization: `Bearer ${token}` } });
+    setBrand(""); setFaceValue(""); setPrice(""); setCode("");
+    alert("Gift card added!");
+  };
+
+  return (
+    <Box>
+      <Typography variant="h5">Admin Panel</Typography>
+      <Typography variant="h6">Users</Typography>
+      <List>
+        {users.map(u => (
+          <ListItem key={u._id}>
+            {u.username || u.email} | Balance: ${u.wallet} | Status: {u.status} | Role: {u.role}
+            <Button onClick={() => addMoney(u._id)}>Add Money</Button>
+            <Button onClick={() => freeze(u._id)}>Freeze</Button>
+            <Button onClick={() => ban(u._id)}>Ban</Button>
+          </ListItem>
+        ))}
+      </List>
+      <hr />
+      <Typography variant="h6">Add New Gift Card</Typography>
+      <TextField label="Brand" value={brand} onChange={e => setBrand(e.target.value)} /><br/>
+      <TextField label="Face Value" value={faceValue} onChange={e => setFaceValue(e.target.value)} /><br/>
+      <TextField label="Price" value={price} onChange={e => setPrice(e.target.value)} /><br/>
+      <TextField label="Code" value={code} onChange={e => setCode(e.target.value)} /><br/>
+      <Button variant="contained" onClick={addGiftCard}>Add Gift Card</Button>
+    </Box>
+  );
+}
+
+export default AdminPanel;
