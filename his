@@ -1,0 +1,183 @@
+import express from "express";
+import mongoose from "mongoose";
+import dotenv from "dotenv";
+import cors from "cors";
+import passport from "passport";
+import { Strategy as GoogleStrategy } from "passport-google-oauth20";
+import User from "./models/User.js";
+import GiftCard from "./models/GiftCard.js";
+import Transaction from "./models/Transaction.js";
+import bcrypt from "bcrypt";
+import jwt from "jsonwebtoken";
+
+dotenv.config();
+const app = express();
+app.use(express.json());
+app.use(cors({ origin: process.env.CLIENT_URL || "http://localhost:5173", credentials: true }));
+
+// Connect MongoDB
+mongoose.connect(process.env.DB_URI, { useNewUrlParser: true, useUnifiedTopology: true })
+  .then(() => console.log("MongoDB connected!"));
+
+// Passport Google Strategy
+passport.use(new GoogleStrategy({
+  clientID: process.env.GOOGLE_CLIENT_ID,
+  clientSecret: process.env.GOOGLE_CLIENT_SECRET,
+  callbackURL: "/auth/google/callback"
+}, async (accessToken, refreshToken, profile, done) => {
+  let user = await User.findOne({ googleId: profile.id });
+  if (!user) {
+    user = await User.create({
+      googleId: profile.id,
+      username: profile.displayName,
+      email: profile.emails[0].value,
+      wallet: 0,
+      status: "active"
+    });
+  }
+  return done(null, user);
+}));
+
+app.use(passport.initialize());
+
+// Helper: authenticate JWT
+function authMiddleware(role = "user") {
+  return async (req, res, next) => {
+    const token = req.headers.authorization?.split(" ")[1];
+    if (!token) return res.status(401).send("Missing token");
+    try {
+      const user = jwt.verify(token, process.env.JWT_SECRET);
+      req.user = user;
+      let dbUser = await User.findById(user._id);
+      if (!dbUser || dbUser.status !== "active") return res.status(403).send("Forbidden");
+      if (role === "admin" && dbUser.role !== "admin") return res.status(403).send("Forbidden");
+      next();
+    } catch {
+      res.status(401).send("Invalid token");
+    }
+  };
+}
+
+// --- Auth endpoints ---
+app.post("/register", async (req, res) => {
+  const { username, email, password } = req.body;
+  if (!username || !email || !password) return res.status(400).json({ error: "Missing fields" });
+  const hashed = await bcrypt.hash(password, 10);
+  const exists = await User.findOne({ $or: [ { email }, { username } ] });
+  if (exists) return res.status(400).json({ error: "User exists" });
+  let user = await User.create({ username, email, password: hashed, wallet: 0, status: "active" });
+  res.json({ message: "Registered" });
+});
+
+app.post("/login", async (req, res) => {
+  const { email, password } = req.body;
+  let user = await User.findOne({ email });
+  if (!user || !user.password || !(await bcrypt.compare(password, user.password))) {
+    return res.status(401).json({ error: "Invalid credentials" });
+  }
+  // Only allow login if not banned or frozen
+  if (user.status !== "active") return res.status(403).json({ error: "Account frozen or banned." });
+  const token = jwt.sign({ _id: user._id, role: user.role }, process.env.JWT_SECRET);
+  res.json({ token });
+});
+
+// Google Auth endpoints
+app.get('/auth/google', passport.authenticate('google', { scope: ['profile', 'email'] }));
+app.get('/auth/google/callback', passport.authenticate('google', { session: false }), (req, res) => {
+  const token = jwt.sign({ _id: req.user._id, role: req.user.role }, process.env.JWT_SECRET);
+  // You'd typically redirect or send token
+  res.status(200).json({ token });
+});
+
+// --- Gift Card endpoints ---
+app.get("/giftcards", async (req, res) => {
+  const cards = await GiftCard.find({ status: "available" });
+  res.json(cards);
+});
+
+app.post("/giftcards/purchase/:id", authMiddleware(), async (req, res) => {
+  let user = await User.findById(req.user._id);
+  let card = await GiftCard.findById(req.params.id);
+  if (!card || card.status !== "available") return res.status(404).send("Card not available");
+  if (user.wallet < card.price) return res.status(400).send("Insufficient wallet balance");
+  user.wallet -= card.price;
+  card.status = "sold";
+  card.buyer = user._id;
+  await user.save();
+  await card.save();
+  await Transaction.create({ user: user._id, type: "purchase", amount: card.price, details: `Bought ${card.brand} card` });
+  res.json({ message: "Purchase successful!", code: card.code, card });
+});
+
+// Deposit funds (demo/manual, not real payment integration)
+app.post("/wallet/deposit", authMiddleware(), async (req, res) => {
+  const { amount } = req.body;
+  let user = await User.findById(req.user._id);
+  user.wallet += amount;
+  await user.save();
+  await Transaction.create({ user: user._id, type: "deposit", amount, details: "Wallet deposit" });
+  res.json({ balance: user.wallet });
+});
+
+app.get("/wallet", authMiddleware(), async (req, res) => {
+  let user = await User.findById(req.user._id);
+  res.json({ balance: user.wallet });
+});
+
+// --- ADMIN CONTROL ---
+app.post("/admin/addmoney", authMiddleware("admin"), async (req, res) => {
+  const { userId, amount } = req.body;
+  let user = await User.findById(userId);
+  if (!user) return res.status(404).send("User not found");
+  user.wallet += amount;
+  await user.save();
+  await Transaction.create({ user: user._id, type: "admin_adjust", amount, details: "Admin top-up" });
+  res.json({ balance: user.wallet });
+});
+
+app.post("/admin/freeze", authMiddleware("admin"), async (req, res) => {
+  const { userId } = req.body;
+  let user = await User.findById(userId);
+  if (!user) return res.status(404).send("User not found");
+  user.status = "frozen";
+  await user.save();
+  res.json({ message: "User frozen" });
+});
+
+app.post("/admin/ban", authMiddleware("admin"), async (req, res) => {
+  const { userId } = req.body;
+  let user = await User.findById(userId);
+  if (!user) return res.status(404).send("User not found");
+  user.status = "banned";
+  await user.save();
+  res.json({ message: "User banned" });
+});
+
+// Create new gift card (Admin only)
+app.post("/admin/giftcards", authMiddleware("admin"), async (req, res) => {
+  const { brand, faceValue, price, code } = req.body;
+  let giftCard = await GiftCard.create({ brand, faceValue, price, code, status: "available" });
+  res.json({ message: "Gift card added", card: giftCard });
+});
+
+// Seed admin account first time
+app.get("/admin/seed", async (req, res) => {
+  let admin = await User.findOne({ role: "admin", email: "admin@example.com" });
+  if (!admin) {
+    let password = await bcrypt.hash("adminpass", 10);
+    await User.create({ username: "admin", email: "admin@example.com", password, wallet: 0, status: "active", role: "admin" });
+    res.json({ message: "Admin seeded: admin@example.com / adminpass" });
+  } else {
+    res.json({ message: "Admin already seeded." });
+  }
+});
+
+// User listing (for admin dashboard)
+app.get("/admin/users", authMiddleware("admin"), async (req, res) => {
+  let users = await User.find();
+  res.json(users);
+});
+
+app.listen(process.env.PORT || 3001, () =>
+  console.log("Backend API running")
+);
