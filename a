@@ -1,0 +1,44 @@
+import React, { useEffect, useState } from "react";
+import axios from "axios";
+import { Card, CardContent, Typography, Button, Grid } from "@mui/material";
+
+function Marketplace() {
+  const [cards, setCards] = useState([]);
+
+  useEffect(() => {
+    axios.get(import.meta.env.VITE_API_URL + "/giftcards")
+      .then(res => setCards(res.data));
+  }, []);
+
+  const buyCard = async (id) => {
+    const token = localStorage.getItem("token");
+    try {
+      let res = await axios.post(import.meta.env.VITE_API_URL + `/giftcards/purchase/${id}`,
+        {},
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      alert("Card purchased! Code: " + res.data.code);
+    } catch (e) {
+      alert("Error: " + e.response.data);
+    }
+  };
+
+  return (
+    <Grid container spacing={2}>
+      {cards.map(card => (
+        <Grid item xs={12} sm={6} md={3} key={card._id}>
+          <Card>
+            <CardContent>
+              <Typography variant="h5">{card.brand}</Typography>
+              <Typography>Value: ${card.faceValue}</Typography>
+              <Typography>Price: ${card.price}</Typography>
+              <Button variant="contained" onClick={() => buyCard(card._id)}>Buy</Button>
+            </CardContent>
+          </Card>
+        </Grid>
+      ))}
+    </Grid>
+  );
+}
+
+export default Marketplace;
