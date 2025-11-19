@@ -1,0 +1,12 @@
+import mongoose from "mongoose";
+
+const GiftCardSchema = new mongoose.Schema({
+  brand: { type: String, required: true },
+  faceValue: { type: Number, required: true },
+  price: { type: Number, required: true },
+  code: { type: String, required: true }, // Actual gift card code
+  status: { type: String, enum: ["available", "sold"], default: "available" },
+  buyer: { type: mongoose.Schema.Types.ObjectId, ref: "User" }
+}, { timestamps: true });
+
+export default mongoose.model("GiftCard", GiftCardSchema);
