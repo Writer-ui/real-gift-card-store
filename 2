@@ -1,0 +1,41 @@
+import React from "react";
+import { BrowserRouter, Routes, Route } from "react-router-dom";
+import Marketplace from "./Marketplace";
+import Wallet from "./Wallet";
+import Login from "./Login";
+import AdminPanel from "./AdminPanel";
+import { CssBaseline, Container, AppBar, Toolbar, Button } from "@mui/material";
+import { useNavigate } from "react-router-dom";
+
+function Navbar() {
+  const navigate = useNavigate();
+  return (
+    <AppBar position="static">
+      <Toolbar>
+        <Button color="inherit" onClick={() => navigate("/")}>Marketplace</Button>
+        <Button color="inherit" onClick={() => navigate("/wallet")}>Wallet</Button>
+        <Button color="inherit" onClick={() => navigate("/admin")}>Admin</Button>
+        <Button color="inherit" onClick={() => navigate("/login")}>Login/Register</Button>
+      </Toolbar>
+    </AppBar>
+  );
+}
+
+function App() {
+  return (
+    <BrowserRouter>
+      <CssBaseline />
+      <Container>
+        <Navbar />
+        <Routes>
+          <Route path="/" element={<Marketplace />} />
+          <Route path="/wallet" element={<Wallet />} />
+          <Route path="/login" element={<Login />} />
+          <Route path="/admin" element={<AdminPanel />} />
+        </Routes>
+      </Container>
+    </BrowserRouter>
+  );
+}
+
+export default App;
